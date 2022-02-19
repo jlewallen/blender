@@ -4800,6 +4800,7 @@ static void registerGeometryNodes()
   register_node_type_geo_mesh_to_curve();
   register_node_type_geo_mesh_to_points();
   register_node_type_geo_object_info();
+  register_node_type_geo_randomized_object_info();
   register_node_type_geo_point_distribute();
   register_node_type_geo_point_instance();
   register_node_type_geo_point_rotate();

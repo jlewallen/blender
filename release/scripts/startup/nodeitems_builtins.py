@@ -195,6 +195,7 @@ def geometry_input_node_items(context):
     yield NodeItem("GeometryNodeIsViewport")
     yield NodeItem("GeometryNodeInputMaterial")
     yield NodeItem("GeometryNodeObjectInfo")
+    yield NodeItem("GeometryNodeRandomizedObjectInfo")
     yield NodeItem("FunctionNodeInputString")
     yield NodeItem("ShaderNodeValue")
     yield NodeItem("FunctionNodeInputVector")

@@ -1378,6 +1378,11 @@ typedef struct NodeGeometryObjectInfo {
   uint8_t transform_space;
 } NodeGeometryObjectInfo;
 
+typedef struct NodeGeometryRandomizedObjectInfo {
+  /* GeometryNodeTransformSpace. */
+  uint8_t transform_space;
+} NodeGeometryRandomizedObjectInfo;
+
 typedef struct NodeGeometryPointInstance {
   /* GeometryNodePointInstanceType. */
   uint8_t instance_type;
