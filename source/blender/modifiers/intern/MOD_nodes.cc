@@ -1690,6 +1690,145 @@ static void requiredDataMask(Object *UNUSED(ob),
   r_cddata_masks->vmask |= CD_MASK_PROP_ALL;
 }
 
+bool evaluate_child_geometry(Depsgraph *depsgraph,
+                             Scene *scene,
+                             Object *ob,
+                             NodesModifierData *nmd,
+                             GeometrySet &input_geometry_set,
+                             GeometrySet &output_geometry_set,
+                             int seed);
+
+bool evaluate_child_geometry(Depsgraph *depsgraph,
+                             Scene *scene,
+                             Object *object,
+                             NodesModifierData *nmd,
+                             GeometrySet &input_geometry_set,
+                             GeometrySet &output_geometry_set,
+                             int seed)
+
+{
+  NodeTreeRefMap tree_refs;
+  DerivedNodeTree tree{*nmd->node_group, tree_refs};
+
+  blender::ResourceScope scope;
+  blender::LinearAllocator<> &allocator = scope.linear_allocator();
+
+  Map<DOutputSocket, GMutablePointer> group_inputs;
+  Set<DSocket> preview_sockets;
+
+  const NodeTreeRef &root_tree_ref = tree.root_context().tree();
+  Span<const NodeRef *> input_nodes = root_tree_ref.nodes_by_type("NodeGroupInput");
+  Span<const NodeRef *> output_nodes = root_tree_ref.nodes_by_type("NodeGroupOutput");
+  if (output_nodes.size() != 1) {
+    // BKE_modifier_set_error(ctx->object, md, "Node group must have a single output node");
+    // geometry_set.clear();
+    return false;
+  }
+
+  const NodeRef &output_node = *output_nodes[0];
+  Span<const InputSocketRef *> all_group_outputs = output_node.inputs().drop_back(1);
+  if (all_group_outputs.is_empty()) {
+    // BKE_modifier_set_error(ctx->object, md, "Node group must have an output socket");
+    // geometry_set.clear();
+    return false;
+  }
+
+  const InputSocketRef *first_output_socket = all_group_outputs[0];
+  if (first_output_socket->idname() != "NodeSocketGeometry") {
+    // BKE_modifier_set_error(ctx->object, md, "Node group's first output must be a geometry");
+    // geometry_set.clear();
+    return false;
+  }
+
+  const DTreeContext *root_context = &tree.root_context();
+  for (const NodeRef *group_input_node : input_nodes) {
+    Span<const OutputSocketRef *> group_input_sockets = group_input_node->outputs().drop_back(1);
+    if (group_input_sockets.is_empty()) {
+      continue;
+    }
+
+    Span<const OutputSocketRef *> remaining_input_sockets = group_input_sockets;
+
+    /* If the group expects a geometry as first input, use the geometry that has been passed to
+     * modifier. */
+    const OutputSocketRef *first_input_socket = group_input_sockets[0];
+    if (first_input_socket->bsocket()->type == SOCK_GEOMETRY) {
+      printf("evaluate: assigned first input geo\n");
+      GeometrySet *geometry_set_in =
+          allocator.construct<GeometrySet>(input_geometry_set).release();
+      group_inputs.add_new({root_context, first_input_socket}, geometry_set_in);
+      remaining_input_sockets = remaining_input_sockets.drop_front(1);
+    }
+
+    /* Initialize remaining group inputs. */
+    for (const OutputSocketRef *socket : remaining_input_sockets) {
+      const CPPType &cpp_type = *socket->typeinfo()->geometry_nodes_cpp_type;
+      printf("evaluate: input socket %s identifier='%s' %d alignment=%d\n",
+             socket->name().c_str(),
+             socket->identifier().c_str(),
+             cpp_type.size(),
+             cpp_type.alignment());
+
+      void *value_in = allocator.allocate(cpp_type.size(), cpp_type.alignment());
+      initialize_group_input(*nmd, *socket, value_in);
+
+      if (socket->name() == "Seed") {
+        printf("evaluate: seeding %d (was %d)\n", seed, *((int *)value_in));
+        (*(int *)value_in) = seed;
+      }
+
+      group_inputs.add_new({root_context, socket}, {cpp_type, value_in});
+    }
+  }
+
+  Vector<DInputSocket> group_outputs;
+  for (const InputSocketRef *socket_ref : output_node.inputs().drop_back(1)) {
+    printf("evaluate: output socket\n");
+    group_outputs.append({root_context, socket_ref});
+  }
+
+  blender::nodes::NodeMultiFunctions mf_by_node{tree};
+  std::optional<geo_log::GeoLogger> geo_logger;
+
+  geo_logger.emplace(std::move(preview_sockets));
+  geo_logger->log_input_geometry(input_geometry_set);
+
+  blender::modifiers::geometry_nodes::GeometryNodesEvaluationParams eval_params;
+  eval_params.input_values = group_inputs;
+  eval_params.output_sockets = group_outputs;
+  eval_params.mf_by_node = &mf_by_node;
+  eval_params.modifier_ = nmd;
+  eval_params.depsgraph = depsgraph;
+  eval_params.self_object = object;
+  eval_params.geo_logger = geo_logger.has_value() ? &*geo_logger : nullptr;
+  eval_params.force_compute_sockets.extend(preview_sockets.begin(), preview_sockets.end());
+  blender::modifiers::geometry_nodes::evaluate_geometry_nodes(eval_params);
+
+  if (eval_params.r_output_values.size() > 0) {
+    output_geometry_set = std::move(*eval_params.r_output_values[0].get<GeometrySet>());
+  }
+  else {
+    return false;
+  }
+
+  /*
+  if (geo_logger.has_value()) {
+    geo_logger->log_output_geometry(output_geometry_set);
+    NodesModifierData *nmd_orig = (NodesModifierData *)BKE_modifier_get_original(object,
+  &nmd->modifier); clear_runtime_data(nmd_orig); nmd_orig->runtime_eval_log = new
+  geo_log::ModifierLog(*geo_logger);
+  }
+
+  store_output_attributes(output_geometry_set, *nmd, output_node, eval_params.r_output_values);
+
+  for (GMutablePointer value : eval_params.r_output_values) {
+    value.destruct();
+  }
+  */
+
+  return true;
+}
+
 ModifierTypeInfo modifierType_Nodes = {
     /* name */ "GeometryNodes",
     /* structName */ "NodesModifierData",

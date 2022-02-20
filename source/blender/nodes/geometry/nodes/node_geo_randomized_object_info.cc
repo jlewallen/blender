@@ -35,6 +35,14 @@
 
 #include <algorithm>
 
+bool evaluate_child_geometry(Depsgraph *depsgraph,
+                             Scene *scene,
+                             Object *ob,
+                             NodesModifierData *nmd,
+                             GeometrySet &input_geometry_set,
+                             GeometrySet &output_geometry_set,
+                             int seed);
+
 namespace blender::nodes::node_geo_randomized_object_info_cc {
 
 NODE_STORAGE_FUNCS(NodeGeometryRandomizedObjectInfo)
@@ -65,104 +73,11 @@ static void node_geo_exec(GeoNodeExecParams params)
                                          GEO_NODE_TRANSFORM_SPACE_RELATIVE);
 
   const Object *self_object = params.self_object();
-  const int seed = params.get_input<int>("Seed");
-
-  printf("\nOK: seed=%d\n", seed);
 
   Object *object = params.get_input<Object *>("Object");
   if (object == nullptr) {
     params.set_default_remaining_outputs();
     return;
-  }
-
-  auto modified = false;
-
-  LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
-    if (md->type == eModifierType_Nodes) {
-      NodesModifierData *nmd = (NodesModifierData *)md;
-      if (nmd->node_group != nullptr) {
-        printf("NODE-GROUP: NODE-GROUP:\n");
-
-        int socket_index;
-        LISTBASE_FOREACH_INDEX (bNodeSocket *, socket, &nmd->node_group->inputs, socket_index) {
-          printf("NODE-GROUP: SOCKET: '%s' identifier='%s'\n", socket->name, socket->identifier);
-
-          IDProperty *property = IDP_GetPropertyFromGroup(nmd->settings.properties,
-                                                          socket->identifier);
-          if (property != nullptr) {
-            if (property->type == IDP_INT) {
-              printf("NODE-GROUP: [%p] seed property\n", property);
-              IDP_Int(property) = seed;
-              modified = true;
-            }
-          }
-        }
-
-        /*
-        IDP_foreach_property(
-            nmd->settings.properties,
-            0,
-            [](IDProperty *property, void *user_data) {
-              ID *id = IDP_Id(property);
-              char *repr = IDP_reprN(property, NULL);
-              printf("IDProperty(%p): ", property);
-              if (repr != NULL) {
-                printf("%s\n", repr);
-                MEM_freeN(repr);
-              }
-              else {
-                printf("<null>\n");
-              }
-
-              if (property->type == IDP_FLOAT) {
-                float value = IDP_Float(property);
-                printf("Property-F: %f\n", value);
-              }
-              if (property->type == IDP_INT) {
-                int value = IDP_Int(property);
-                printf("Property-D: %d\n", value);
-              }
-            },
-            nullptr);
-            */
-
-        /*
-        // Unavailable from this level of the source tree, appears this is only available from MOD_
-        layer.
-
-        NodeTreeRefMap tree_refs;
-        DerivedNodeTree tree{*nmd->node_group, tree_refs};
-
-        blender::nodes::NodeMultiFunctions mf_by_node{tree};
-        Map<DOutputSocket, GMutablePointer> group_inputs;
-        Vector<DInputSocket> group_outputs;
-        std::optional<geo_log::GeoLogger> geo_logger;
-
-        blender::modifiers::geometry_nodes::GeometryNodesEvaluationParams eval_params;
-
-        eval_params.input_values = group_inputs;
-        eval_params.output_sockets = group_outputs;
-        eval_params.mf_by_node = &mf_by_node;
-        eval_params.modifier_ = nmd;
-        eval_params.depsgraph = params.depsgraph();
-        eval_params.self_object = object;
-        eval_params.geo_logger = geo_logger.has_value() ? &*geo_logger : nullptr;
-        blender::modifiers::geometry_nodes::evaluate_geometry_nodes(eval_params);
-        GeometrySet output_geometry_set = std::move(
-            *eval_params.r_output_values[0].get<GeometrySet>());
-            */
-      }
-    }
-  }
-
-  if (modified) {
-    Scene *scene = DEG_get_input_scene(params.depsgraph());
-    printf("modified, building object data\n");
-
-    // Crashes on memory free, likely from recurisve call into BKE_ layer
-    // makeDerivedMesh(params.depsgraph(), scene, object, &CD_MASK_BAREMESH);
-
-    printf("modified, building object data, done\n");
   }
 
   const float4x4 &object_matrix = object->obmat;
@@ -176,12 +91,60 @@ static void node_geo_exec(GeoNodeExecParams params)
       return;
     }
 
+    const int seed = params.get_input<int>("Seed");
+    printf("\nOK: seed=%d\n", seed);
+
+    LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
+      if (md->type == eModifierType_Nodes) {
+        NodesModifierData *nmd = (NodesModifierData *)md;
+        if (nmd->node_group != nullptr) {
+          /*
+          int socket_index;
+          LISTBASE_FOREACH_INDEX (bNodeSocket *, socket, &nmd->node_group->inputs, socket_index) {
+            printf("NODE-GROUP: SOCKET: '%s' identifier='%s'\n", socket->name, socket->identifier);
+
+            IDProperty *property = IDP_GetPropertyFromGroup(nmd->settings.properties,
+                                                            socket->identifier);
+            if (property != nullptr) {
+              if (property->type == IDP_INT) {
+                printf("NODE-GROUP: [%p] seed property %d\n", property, seed);
+                IDP_Int(property) = seed;
+              }
+            }
+          }
+          */
+
+          // NOTE I have no idea if this is the proper way to do this. Definitely
+          // should also probably be the "original" geometry set/mesh data here?
+          GeometrySet input_geometry_set = bke::object_get_evaluated_geometry_set(*object);
+          GeometrySet output_geometry_set;
+
+          Scene *scene = DEG_get_input_scene(params.depsgraph());
+          if (!evaluate_child_geometry(params.depsgraph(),
+                                       scene,
+                                       object,
+                                       nmd,
+                                       input_geometry_set,
+                                       output_geometry_set,
+                                       seed)) {
+            params.error_message_add(NodeWarningType::Error,
+                                     TIP_("Child geometry failed to evaluate"));
+            params.set_default_remaining_outputs();
+            return;
+          }
+
+          printf("NODE-GROUP: SET OUTPUT GEO\n");
+          params.set_output("Geometry", output_geometry_set);
+        }
+      }
+    }
+
+    /*
     GeometrySet geometry_set = bke::object_get_evaluated_geometry_set(*object);
     if (transform_space_relative) {
       transform_geometry_set(geometry_set, transform, *params.depsgraph());
     }
-
-    params.set_output("Geometry", geometry_set);
+    */
   }
 }
 
