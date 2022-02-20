@@ -9,27 +9,7 @@
 
 #include "DNA_modifier_types.h"
 
-#include "BKE_DerivedMesh.h"
-#include "BKE_collection.h"
-#include "BKE_idprop.h"
-#include "BKE_object.h"
-
-#include "DEG_depsgraph_build.h"
 #include "DEG_depsgraph_query.h"
-
-#include "NOD_derived_node_tree.hh"
-#include "NOD_geometry.h"
-#include "NOD_geometry_nodes_eval_log.hh"
-#include "NOD_node_declaration.hh"
-
-// #include "MOD_modifiertypes.h"
-// #include "MOD_nodes.h"
-// #include "MOD_nodes_evaluator.hh"
-// #include "MOD_ui_common.h"
-
-#include "FN_field.hh"
-#include "FN_field_cpp_type.hh"
-#include "FN_multi_function.hh"
 
 #include "node_geometry_util.hh"
 
@@ -98,22 +78,6 @@ static void node_geo_exec(GeoNodeExecParams params)
       if (md->type == eModifierType_Nodes) {
         NodesModifierData *nmd = (NodesModifierData *)md;
         if (nmd->node_group != nullptr) {
-          /*
-          int socket_index;
-          LISTBASE_FOREACH_INDEX (bNodeSocket *, socket, &nmd->node_group->inputs, socket_index) {
-            printf("NODE-GROUP: SOCKET: '%s' identifier='%s'\n", socket->name, socket->identifier);
-
-            IDProperty *property = IDP_GetPropertyFromGroup(nmd->settings.properties,
-                                                            socket->identifier);
-            if (property != nullptr) {
-              if (property->type == IDP_INT) {
-                printf("NODE-GROUP: [%p] seed property %d\n", property, seed);
-                IDP_Int(property) = seed;
-              }
-            }
-          }
-          */
-
           // NOTE I have no idea if this is the proper way to do this. Definitely
           // should also probably be the "original" geometry set/mesh data here?
           GeometrySet input_geometry_set = bke::object_get_evaluated_geometry_set(*object);
@@ -133,18 +97,13 @@ static void node_geo_exec(GeoNodeExecParams params)
             return;
           }
 
-          printf("NODE-GROUP: SET OUTPUT GEO\n");
+          if (transform_space_relative) {
+            transform_geometry_set(output_geometry_set, transform, *params.depsgraph());
+          }
           params.set_output("Geometry", output_geometry_set);
         }
       }
     }
-
-    /*
-    GeometrySet geometry_set = bke::object_get_evaluated_geometry_set(*object);
-    if (transform_space_relative) {
-      transform_geometry_set(geometry_set, transform, *params.depsgraph());
-    }
-    */
   }
 }
 
