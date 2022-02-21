@@ -1763,7 +1763,7 @@ bool evaluate_child_geometry(Depsgraph *depsgraph,
     /* Initialize remaining group inputs. */
     for (const OutputSocketRef *socket : remaining_input_sockets) {
       const CPPType &cpp_type = *socket->typeinfo()->geometry_nodes_cpp_type;
-      printf("evaluate: input socket %s identifier='%s' %d alignment=%d\n",
+      printf("evaluate: input socket %s identifier='%s' size=%ld alignment=%ld\n",
              socket->name().c_str(),
              socket->identifier().c_str(),
              cpp_type.size(),
@@ -1783,7 +1783,10 @@ bool evaluate_child_geometry(Depsgraph *depsgraph,
 
   Vector<DInputSocket> group_outputs;
   for (const InputSocketRef *socket_ref : output_node.inputs().drop_back(1)) {
-    printf("evaluate: output socket\n");
+    printf("evaluate: output socket %s identifier='%s' size=%d\n",
+           socket_ref->name().c_str(),
+           socket_ref->identifier().c_str(),
+           -1);
     group_outputs.append({root_context, socket_ref});
   }
 

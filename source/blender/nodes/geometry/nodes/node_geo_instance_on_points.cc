@@ -57,6 +57,8 @@ static void add_instances_from_component(
   VArray<float3> rotations;
   VArray<float3> scales;
 
+  printf("node-geo-iop:add-instances-from-component domain-size=%d\n", domain_size);
+
   GeometryComponentFieldContext field_context{src_component, domain};
   const Field<bool> selection_field = params.get_input<Field<bool>>("Selection");
   fn::FieldEvaluator evaluator{field_context, domain_size};
@@ -76,6 +78,8 @@ static void add_instances_from_component(
   const int start_len = dst_component.instances_amount();
   const int select_len = selection.index_range().size();
   dst_component.resize(start_len + select_len);
+
+  printf("node-geo-iop:add-instances-from-component start=%d select=%d\n", start_len, select_len);
 
   MutableSpan<int> dst_handles = dst_component.instance_reference_handles().slice(start_len,
                                                                                   select_len);
@@ -109,6 +113,8 @@ static void add_instances_from_component(
     for (const int range_i : selection_range) {
       const int64_t i = selection[range_i];
 
+      printf("node-geo-iop:for: %ld\n", i);
+
       /* Compute base transform for every instances. */
       float4x4 &dst_transform = dst_transforms[range_i];
       dst_transform = float4x4::from_loc_eul_scale(positions[i], rotations[i], scales[i]);
@@ -129,6 +135,12 @@ static void add_instances_from_component(
             const int src_handle = src_instances->instance_reference_handles()[index];
             dst_handle = handle_mapping[src_handle];
 
+            printf("node-geo-iop:for: %ld pick instance src=%d original=%d index=%d\n",
+                   i,
+                   src_instances_amount,
+                   original_index,
+                   index);
+
             /* Take transforms of the source instance into account. */
             mul_m4_m4_post(dst_transform.values,
                            src_instances->instance_transforms()[index].values);
@@ -138,6 +150,7 @@ static void add_instances_from_component(
       else {
         /* Use entire source geometry as instance. */
         dst_handle = full_instance_handle;
+        printf("node-geo-iop:for: %ld single instance\n", i);
       }
       /* Set properties of new instance. */
       dst_handles[range_i] = dst_handle;
@@ -158,6 +171,8 @@ static void add_instances_from_component(
   for (const auto item : attributes_to_propagate.items()) {
     const AttributeIDRef &attribute_id = item.key;
     const AttributeKind attribute_kind = item.value;
+
+    printf("node-geo-iop:attribute\n");
 
     const GVArray src_attribute = src_component.attribute_get_for_read(
         attribute_id, ATTR_DOMAIN_POINT, attribute_kind.data_type);
@@ -192,6 +207,10 @@ static void node_geo_exec(GeoNodeExecParams params)
   GeometrySet instance = params.get_input<GeometrySet>("Instance");
   instance.ensure_owns_direct_data();
 
+  printf("node-geo-iop:exec\n");
+
+  std::cout << instance << std::endl;
+
   geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
     InstancesComponent &instances = geometry_set.get_component_for_write<InstancesComponent>();
 
@@ -204,6 +223,7 @@ static void node_geo_exec(GeoNodeExecParams params)
     attributes_to_propagate.remove("position");
 
     if (geometry_set.has<MeshComponent>()) {
+      printf("node-geo-iop:geometry-set:has-mesh\n");
       add_instances_from_component(instances,
                                    *geometry_set.get_component_for_read<MeshComponent>(),
                                    instance,
@@ -211,6 +231,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                    attributes_to_propagate);
     }
     if (geometry_set.has<PointCloudComponent>()) {
+      printf("node-geo-iop:geometry-set:has-point-cloud\n");
       add_instances_from_component(instances,
                                    *geometry_set.get_component_for_read<PointCloudComponent>(),
                                    instance,
@@ -218,6 +239,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                    attributes_to_propagate);
     }
     if (geometry_set.has<CurveComponent>()) {
+      printf("node-geo-iop:geometry-set:has-curve\n");
       add_instances_from_component(instances,
                                    *geometry_set.get_component_for_read<CurveComponent>(),
                                    instance,
@@ -233,6 +255,28 @@ static void node_geo_exec(GeoNodeExecParams params)
    * because it might remove references that the loop still wants to iterate over. */
   InstancesComponent &instances = geometry_set.get_component_for_write<InstancesComponent>();
   instances.remove_unused_references();
+
+  printf("node-geo-iop:modifying instances=%d references=%d\n",
+         instances.instances_amount(),
+         instances.references_amount());
+
+  for (const InstanceReference &ref : instances.references()) {
+    printf("node-geo-iop:reference\n");
+    switch (ref.type()) {
+      case InstanceReference::Type::None:
+        printf("node-geo-iop:NONE\n");
+        break;
+      case InstanceReference::Type::Collection:
+        printf("node-geo-iop:Collection\n");
+        break;
+      case InstanceReference::Type::Object:
+        printf("node-geo-iop:Object\n");
+        break;
+      case InstanceReference::Type::GeometrySet:
+        printf("node-geo-iop:GeometrySet\n");
+        break;
+    }
+  }
 
   params.set_output("Instances", std::move(geometry_set));
 }

@@ -30,7 +30,8 @@ NODE_STORAGE_FUNCS(NodeGeometryRandomizedObjectInfo)
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Object>(N_("Object")).hide_label();
-  b.add_input<decl::Int>(N_("Seed"));
+  b.add_input<decl::Int>(N_("Seed")).supports_field();
+  b.add_input<decl::Int>(N_("Count"));
   b.add_output<decl::Geometry>(N_("Geometry"));
 }
 
@@ -71,8 +72,17 @@ static void node_geo_exec(GeoNodeExecParams params)
       return;
     }
 
-    const int seed = params.get_input<int>("Seed");
-    printf("\nOK: seed=%d\n", seed);
+    const Field<int> seeds_field = params.get_input<Field<int>>("Seed");
+    const int count = params.get_input<int>("Count");
+
+    int seed = 0;
+    if (seeds_field.node().depends_on_input()) {
+      printf("\nOK: dependent seed=%d count=%d\n", seed, count);
+    }
+    else {
+      printf("\nOK: constant seed=%d count=%d\n", seed, count);
+      seed = fn::evaluate_constant_field(seeds_field);
+    }
 
     LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
       if (md->type == eModifierType_Nodes) {
@@ -83,18 +93,31 @@ static void node_geo_exec(GeoNodeExecParams params)
           GeometrySet input_geometry_set = bke::object_get_evaluated_geometry_set(*object);
           GeometrySet output_geometry_set;
 
+          InstancesComponent &output_instances =
+              output_geometry_set.get_component_for_write<InstancesComponent>();
+
           Scene *scene = DEG_get_input_scene(params.depsgraph());
-          if (!evaluate_child_geometry(params.depsgraph(),
-                                       scene,
-                                       object,
-                                       nmd,
-                                       input_geometry_set,
-                                       output_geometry_set,
-                                       seed)) {
-            params.error_message_add(NodeWarningType::Error,
-                                     TIP_("Child geometry failed to evaluate"));
-            params.set_default_remaining_outputs();
-            return;
+
+          // TODO: parallel for
+          for (int i = 0; i < count; ++i) {
+            GeometrySet instance_geometry_set;
+
+            if (!evaluate_child_geometry(params.depsgraph(),
+                                         scene,
+                                         object,
+                                         nmd,
+                                         input_geometry_set,
+                                         instance_geometry_set,
+                                         seed + i)) {
+              params.error_message_add(NodeWarningType::Error,
+                                       TIP_("Child geometry failed to evaluate"));
+              params.set_default_remaining_outputs();
+              return;
+            }
+
+            const int handle = output_instances.add_reference(
+                InstanceReference(instance_geometry_set));
+            output_instances.add_instance(handle, blender::float4x4::identity());
           }
 
           if (transform_space_relative) {
